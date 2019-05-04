@@ -15,26 +15,33 @@ import cv2
 import numpy as np
 import math
 
-os.environ["CUDA_VISIBLE_DEVICES"]='0'
-torch.cuda.set_device(0)
+os.environ["CUDA_VISIBLE_DEVICES"]='0,1'
+torch.cuda.set_device(-1)
 
 
 print('Loading model..')
 ssd_net = build_sfd('test', 640, 2)
 net = ssd_net
 net.load_state_dict(torch.load('./weights/Res50_pyramid.pth'))
-net.cuda()
+net = net.cuda()
 net.eval()
 print('Finished loading model!')
+'''
+if torch.cuda.device_count() > 1:
+  net = nn.DataParallel(net,[0,1])
 
+net.to(device)
+'''
+dirpath = '/home/data/FACE/vid_3/'
+savepath = '/home/data/FACE/vid-3-face/'
 
 def detect_face(image, shrink):
     x = image
     if shrink != 1:
         x = cv2.resize(image, None, None, fx=shrink, fy=shrink, interpolation=cv2.INTER_LINEAR)
 
-
-    print('shrink:{}'.format(shrink))
+    ###***** shrink **********##########
+    #print('shrink:{}'.format(shrink))
 
     width = x.shape[1]
     height = x.shape[0]
@@ -43,11 +50,16 @@ def detect_face(image, shrink):
 
     x = torch.from_numpy(x).permute(2, 0, 1)
     x = x.unsqueeze(0)
-    x = Variable(x.cuda(), volatile=True)
+    #x = Variable(x, volatile=True)
+    x = Variable(x, volatile=True).cuda()
 
     net.priorbox = PriorBoxLayer(width,height)
-    y = net(x)
+    #the following part is very important,may be report memory error without them
+    with torch.no_grad():
+        y = net(x)
+
     detections = y.data
+
     scale = torch.Tensor([width, height, width, height])
 
     boxes=[]
@@ -189,21 +201,78 @@ def bbox_vote(det):
     dets = dets[0:750, :]
     return dets
 
+def resize_image(image, height, width):
+     top, bottom, left, right = (0, 0, 0, 0)
 
-def write_to_txt(f, det):
-    f.write('{:s}\n'.format(str(event[0][0].encode('utf-8'))[2:-1] + '/' + im_name + '.jpg'))
-    f.write('{:d}\n'.format(det.shape[0]))
+     h, w, _ = image.shape
+
+     #对于长宽不相等的图片，找到最长的一边
+     longest_edge = max(h, w)    
+
+     #计算短边需要增加多上像素宽度使其与长边等长
+     if h < longest_edge:
+         dh = longest_edge - h
+         top = dh // 2
+         bottom = dh - top
+     elif w < longest_edge:
+         dw = longest_edge - w
+         left = dw // 2
+         right = dw - left
+     else:
+         pass 
+
+     #RGB颜色
+     BLACK = [0, 0, 0]
+
+     #给图像增加边界，是图片长、宽等长，cv2.BORDER_CONSTANT指定边界颜色由value指定
+     constant = cv2.copyMakeBorder(image, top , bottom, left, right, cv2.BORDER_CONSTANT, value = BLACK)
+
+     #调整图像大小并返回
+     return cv2.resize(constant, (height, width))
+
+
+def write_to_txt(det,image,num):
+    n=0
+    s=0
+    j=0
+    #f.write('{:s}\n'.format(str(num)+'.jpg'))
+    #f.write('{:d}\n'.format(det.shape[0]))
     for i in range(det.shape[0]):
         xmin = det[i][0]
         ymin = det[i][1]
         xmax = det[i][2]
         ymax = det[i][3]
         score = det[i][4]
-        f.write('{:.1f} {:.1f} {:.1f} {:.1f} {:.3f}\n'.
-                format(xmin, ymin, (xmax - xmin + 1), (ymax - ymin + 1), score))
+        if n < score:
+            n = score
+            s = score
+            j = i
+        #f.write('{:.1f} {:.1f} {:.1f} {:.1f} {:.3f}\n'.
+        #        format(xmin, ymin, (xmax - xmin + 1), (ymax - ymin + 1), score))
+    #this part to crop image ,need the pixes number is int type
+    #print('j:',j)
+    #hight=ymax-ymin
+    #width=xmax-xmin
+    #[ymin:ymin+hight,xmin:xmin+width]
+    hight=det[j][3] - det[j][1] + 1
+    width=det[j][2] - det[j][0] + 1
+    x1=det[j][0]
+    y1=det[j][1]
+    if x1 <0:
+        x1=0
+    if y1 <0:
+        y1=0
+    #[ymin:ymin+hight,xmin:xmin+width]
+    cropimg=image[int(y1):int(y1+hight),int(x1):int(x1+width)]
+    cropimg=resize_image(cropimg, 224, 224) #use to vgg16
+    #cropimg=image[:int(130.1+242.4),175:int(175.4+313.7)]
+    #new_img=Image.fromarray(cropimg) #transfrom the array to image
+    #new_img.show()
+    cv2.imwrite(savepath + str(num.split('-')[0]) + '/' + str(num) + '.jpg',cropimg)
 
 
 if __name__ == '__main__':
+    '''
     subset = 'val' # val or test
     if subset is 'val':
         wider_face = sio.loadmat('/home/guoqiushan/share/workspace/caffe-ssd-s3fd/sfd_test_code/WIDER_FACE/wider_face_val.mat')    # Val set
@@ -216,7 +285,7 @@ if __name__ == '__main__':
     Path = '/home/tmp_data_dir/zhaoyu/wider_face/WIDER_val/images/'
     save_path = '/home/guoqiushan/share/workspace/caffe-ssd-s3fd-focal/sfd_test_code/WIDER_FACE/eval_tools_old-version/tmp_haha' + '_' + subset + '/'
 
-
+    
     for index, event in enumerate(event_list):
         filelist = file_list[index][0]
         if not os.path.exists(save_path + str(event[0][0].encode('utf-8'))[2:-1] ):
@@ -226,22 +295,63 @@ if __name__ == '__main__':
             im_name = str(file[0][0].encode('utf-8'))[2:-1] 
             Image_Path = Path + str(event[0][0].encode('utf-8'))[2:-1] +'/'+im_name[:] + '.jpg'
             print(Image_Path)
-            image = cv2.imread(Image_Path,cv2.IMREAD_COLOR)
+    '''
 
-            max_im_shrink = (0x7fffffff / 200.0 / (image.shape[0] * image.shape[1])) ** 0.5 # the max size of input image for caffe
-            max_im_shrink = 3 if max_im_shrink > 3 else max_im_shrink
+    list = os.listdir(dirpath) #list the content and file
+    n=0
+    for i in range(0,len(list)):
+        path = os.path.join(dirpath,list[i])
+        #save_path = os.path.join(savepath,list[i])
+        os.makedirs(savepath+list[i].split('.')[0], exist_ok=True)
+        checkpath=savepath+list[i].split('.')[0]
+        filenum=len([lists for lists in os.listdir(checkpath) if os.path.isfile(os.path.join(checkpath, lists))])
+        if filenum == 32:
+            continue
+        # input image
+        #image = cv2.imread(path,cv2.IMREAD_COLOR)
+        # input video
+        camera = cv2.VideoCapture(path)
+        if not camera.isOpened():
+            print("cannot open camear")
+            exit(0)
+        j=0
+        while True:
+            try:
+                ret, frame = camera.read()
+                #print('ret frame:',ret,frame.shape)
+                if not ret:
+                    break
+                image = cv2.cvtColor(frame, cv2.IMREAD_COLOR)
+                #image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                max_im_shrink = (0x7fffffff / 200.0 / (image.shape[0] * image.shape[1])) ** 0.5 # the max size of input image for caffe
+                #print('max_im_shrink:',max_im_shrink)
+                max_im_shrink = 3 if max_im_shrink > 3 else max_im_shrink
             
-            shrink = max_im_shrink if max_im_shrink < 1 else 1
+                shrink = max_im_shrink if max_im_shrink < 1 else 1
 
-            det0 = detect_face(image, shrink)  # origin test
-            det1 = flip_test(image, shrink)    # flip test
-            [det2, det3] = multi_scale_test(image, max_im_shrink)#min(2,1400/min(image.shape[0],image.shape[1])))  #multi-scale test
-            det4 = multi_scale_test_pyramid(image, max_im_shrink)
-            det = np.row_stack((det0, det1, det2, det3, det4))
+                det0 = detect_face(image, shrink)  # origin test
+                det1 = flip_test(image, shrink)    # flip test
+                [det2, det3] = multi_scale_test(image, max_im_shrink)#min(2,1400/min(image.shape[0],image.shape[1])))  #multi-scale test
+                #print('image:',image.shape)
+                det4 = multi_scale_test_pyramid(image, max_im_shrink)
+                det = np.row_stack((det0, det1, det2, det3, det4))
 
-            dets = bbox_vote(det)
-            f = open(save_path + str(event[0][0].encode('utf-8'))[2:-1]  + '/' + im_name + '.txt', 'w')
-            write_to_txt(f, dets)
-
-            print('event:%d num:%d' % (index + 1, num + 1))
-
+                dets = bbox_vote(det)
+                j=j+1
+                #print('j:',j)
+                #f = open(savepath + list[i].split('.')[0]+'-'+str(j)+ '.txt', 'w')
+                #print('det:',dets)
+                #write_to_txt(f,dets,image,list[i].split('.')[0]+'-'+str(j))
+                write_to_txt(dets,image,list[i].split('.')[0]+'-'+str(j))
+            except:
+                fi = open('/home/ye/bugvid3'+ '.txt', 'w')
+                fi.write('{:s}\n'.format(str(list[i])))
+                fi.close()
+                break
+            if j == 32:
+                #n+=1
+                #print('finish-------------------')
+                break
+        n+=1
+        print('n:',n)
+            #print('event:%d num:%d' % (index + 1, num + 1))
