@@ -26,5 +26,7 @@ With the model and test.py, you can get the same result on WIDER FACE Val set!
 
 *OpenCV3
 
+*Anaconda:environment.yaml is the environment file,using 'conda env create -f environment.yaml' to create the envrionment I test in my pc.
+
 ### For video / image
 You can input the video or image
