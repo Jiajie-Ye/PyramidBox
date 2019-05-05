@@ -20,7 +20,7 @@ With the model and test.py, you can get the same result on WIDER FACE Val set!
 ## Usage
 ### Prerequisites
 
-*Python3
+*Python3.5
 
 *Pytorch3.1
 
