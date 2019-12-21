@@ -16,6 +16,12 @@ You can download [model](https://pan.baidu.com/s/1tSys4yfvKEJVZcxTLzNbUw) from B
 
 With the model and test.py, you can get the same result on WIDER FACE Val set!
 
+Before start, you should put the model into a file named *weights*
+
+```cd PyramidBox```
+
+```mkdir weights```
+
 
 ## Usage
 ### Prerequisites
